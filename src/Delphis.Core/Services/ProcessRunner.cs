@@ -34,12 +34,18 @@ public class ProcessRunner : IProcessRunner
 
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
+        var stdoutDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stderrDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         using var process = new Process { StartInfo = psi };
 
         void OnOutputData(object sender, DataReceivedEventArgs e)
         {
-            if (e.Data is null) return;
+            if (e.Data is null)
+            {
+                stdoutDone.TrySetResult();
+                return;
+            }
             lock (stdoutBuilder)
             {
                 stdoutBuilder.AppendLine(e.Data);
@@ -51,7 +57,11 @@ public class ProcessRunner : IProcessRunner
 
         void OnErrorData(object sender, DataReceivedEventArgs e)
         {
-            if (e.Data is null) return;
+            if (e.Data is null)
+            {
+                stderrDone.TrySetResult();
+                return;
+            }
             lock (stderrBuilder)
             {
                 stderrBuilder.AppendLine(e.Data);
@@ -73,8 +83,9 @@ public class ProcessRunner : IProcessRunner
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            // Wait for completion or cancellation
+            // Wait for completion or cancellation, then drain async stdout/stderr pipes before reading builders.
             await process.WaitForExitAsync(cancellationToken);
+            await Task.WhenAll(stdoutDone.Task, stderrDone.Task);
 
             return new ProcessExecutionResult(
                 ExitCode: process.ExitCode,

@@ -3,8 +3,11 @@ Delphis Constants and Presets for the Qt6 GUI.
 Mirrors and interfaces with Delphis.Core C# definitions.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any
+
 
 def _load_app_version() -> str:
     candidates = [
@@ -18,8 +21,8 @@ def _load_app_version() -> str:
                 v = c.read_text(encoding="utf-8").strip()
                 if v:
                     return v
-            except Exception:
-                pass
+            except (OSError, UnicodeDecodeError):
+                continue
     return "1.0.0"
 
 APP_NAME = "Delphis"
@@ -45,7 +48,7 @@ GAME_ARCHIVE_FILE_FILTER = (
     "All Files (*)"
 )
 
-DDS_PRESETS: Dict[str, Dict[str, any]] = {
+DDS_PRESETS: dict[str, dict[str, Any]] = {
     "BC7": {
         "name": "BC7 (High Quality RGBA - Recommended)",
         "format": "BC7",
@@ -83,7 +86,7 @@ DDS_PRESETS: Dict[str, Dict[str, any]] = {
     }
 }
 
-AI_MODELS: List[Tuple[str, str]] = [
+AI_MODELS: list[tuple[str, str]] = [
     ("realesrgan-x4plus-anime", "RealESRGAN x4plus Anime (Optimized for cel-shaded/anime GameCube & Wii textures)"),
     ("realesrgan-x4plus", "RealESRGAN x4plus (General purpose / realistic textures)"),
     ("realesr-animevideov3", "RealESR AnimeVideo v3 (Lightweight anime & cartoon textures)"),

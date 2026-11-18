@@ -2,13 +2,22 @@
 Real-time Console Output Drawer Widget for Delphis.
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QColor, QFontDatabase, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QProgressBar, QPlainTextEdit, QFrame, QApplication
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtGui import QTextCursor, QTextCharFormat, QColor, QFontDatabase
+
 from delphis_gui.style import get_breeze_icon
+
 
 class ConsoleDrawer(QWidget):
     """
@@ -121,5 +130,6 @@ class ConsoleDrawer(QWidget):
 
     def _copy_log(self):
         clipboard = QApplication.clipboard()
-        clipboard.setText(self.log_edit.toPlainText())
-        self.set_status("Log copied to clipboard")
+        if clipboard is not None:
+            clipboard.setText(self.log_edit.toPlainText())
+            self.set_status("Log copied to clipboard")

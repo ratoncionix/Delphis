@@ -67,6 +67,57 @@ public class AlphaProcessor : IAlphaProcessor
         };
     }
 
+    public static IReadOnlyList<string> BuildMagickArguments(string inputPath, string outputPath, AlphaOptions options)
+    {
+        var args = new List<string> { inputPath };
+
+        if (options.RemoveAlpha)
+        {
+            if (options.BackgroundColor is not null)
+            {
+                var bgHex = $"#{options.BackgroundColor.R:X2}{options.BackgroundColor.G:X2}{options.BackgroundColor.B:X2}";
+                args.AddRange(new[] { "-background", bgHex, "-alpha", "remove", "-alpha", "off" });
+            }
+            else
+            {
+                args.AddRange(new[] { "-alpha", "off" });
+            }
+
+            args.Add(outputPath);
+            return args;
+        }
+
+        // Ensure an alpha channel exists before channel operations on opaque RGB inputs.
+        args.AddRange(new[] { "-alpha", "set" });
+
+        if (options.Defringe)
+        {
+            args.AddRange(new[] { "-channel", "RGB", "-fx", "a>0&&a<1?u/a:u", "+channel" });
+        }
+
+        double factor = options.AlphaValue / 255.0;
+        var factorStr = factor.ToString("0.###", CultureInfo.InvariantCulture);
+
+        if (options.ScaleAlpha)
+        {
+            args.AddRange(new[] { "-channel", "A", "-evaluate", "multiply", factorStr, "+channel" });
+        }
+        else
+        {
+            var valStr = options.AlphaValue.ToString(CultureInfo.InvariantCulture);
+            args.AddRange(new[] { "-channel", "A", "-evaluate", "set", valStr, "+channel" });
+        }
+
+        if (options.SmoothEdges && options.SmoothRadius > 0.0)
+        {
+            var radStr = options.SmoothRadius.ToString("0.0", CultureInfo.InvariantCulture);
+            args.AddRange(new[] { "-channel", "A", "-blur", $"0x{radStr}", "+channel" });
+        }
+
+        args.Add(outputPath);
+        return args;
+    }
+
     public async Task<bool> ProcessSingleImageAsync(
         string inputPath,
         string outputPath,
@@ -96,46 +147,7 @@ public class AlphaProcessor : IAlphaProcessor
             Directory.CreateDirectory(outDir);
         }
 
-        var args = new List<string> { inputPath };
-
-        if (options.RemoveAlpha)
-        {
-            if (options.BackgroundColor is not null)
-            {
-                var bgHex = $"#{options.BackgroundColor.R:X2}{options.BackgroundColor.G:X2}{options.BackgroundColor.B:X2}";
-                args.AddRange(new[] { "-background", bgHex, "-alpha", "remove", "-alpha", "off" });
-            }
-            else
-            {
-                args.AddRange(new[] { "-alpha", "off" });
-            }
-        }
-        else
-        {
-            // Adjust alpha opacity
-            double factor = options.AlphaValue / 255.0;
-            var factorStr = factor.ToString("0.###", CultureInfo.InvariantCulture);
-
-            if (options.ScaleAlpha)
-            {
-                // Scale existing alpha gradient proportionally
-                args.AddRange(new[] { "-channel", "A", "-evaluate", "multiply", factorStr, "+channel" });
-            }
-            else
-            {
-                // Hard cutout alpha
-                var valStr = options.AlphaValue.ToString(CultureInfo.InvariantCulture);
-                args.AddRange(new[] { "-channel", "A", "-evaluate", "set", valStr, "+channel" });
-            }
-
-            if (options.SmoothEdges && options.SmoothRadius > 0.0)
-            {
-                var radStr = options.SmoothRadius.ToString("0.0", CultureInfo.InvariantCulture);
-                args.AddRange(new[] { "-channel", "A", "-blur", $"0x{radStr}", "+channel" });
-            }
-        }
-
-        args.Add(finalOutput);
+        var args = BuildMagickArguments(inputPath, finalOutput, options);
 
         var result = await _processRunner.RunAsync(magick, args, null, null, cancellationToken);
         return result.IsSuccess && File.Exists(finalOutput);

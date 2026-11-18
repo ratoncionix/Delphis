@@ -2,13 +2,25 @@
 Tab 4: DDS Texture Optimizer for Dolphin
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from __future__ import annotations
+
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
-    QCheckBox, QLabel, QFormLayout, QScrollArea, QMessageBox, QFrame
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QLabel,
+    QMessageBox,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
-from delphis_gui.gui.widgets.path_picker import PathPicker
+
 from delphis_gui.constants import DDS_PRESETS
+from delphis_gui.gui.widgets.path_picker import PathPicker
+
 
 class DDSTab(QWidget):
     """
@@ -101,24 +113,35 @@ class DDSTab(QWidget):
         desc = preset_data.get("description", "")
         self.lbl_desc.setText(desc)
 
-    def execute_action(self):
-        """Execute DDS conversion task from top action bar."""
+    def build_command(self) -> list[str] | None:
+        """Build the delphis-cli dds command arguments, or None if required paths are missing."""
         in_path = self.input_picker.path()
         out_path = self.output_picker.path()
 
         if not in_path or not out_path:
-            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
-            return
+            return None
 
         preset_val = self.combo_preset.currentData()
 
         cmd = [
             "dds", in_path, out_path,
-            "--preset", str(preset_val)
+            "--preset", str(preset_val),
         ]
 
         if not self.chk_mipmaps.isChecked():
             cmd.append("--no-mips")
+
+        if not self.chk_recursive.isChecked():
+            cmd.append("--no-recursive")
+
+        return cmd
+
+    def execute_action(self):
+        """Execute DDS conversion task from top action bar."""
+        cmd = self.build_command()
+        if cmd is None:
+            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
+            return
 
         self.requestWorker.emit(cmd)
 

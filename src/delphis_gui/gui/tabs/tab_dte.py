@@ -2,14 +2,29 @@
 Tab 1: Dolphin Texture Extraction & Tonemaps (DTE)
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from __future__ import annotations
+
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QRadioButton,
-    QButtonGroup, QCheckBox, QLabel, QLineEdit, QFormLayout, QScrollArea,
-    QSpinBox, QComboBox, QMessageBox
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QRadioButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
+
 from delphis_gui.constants import GAME_ARCHIVE_FILE_FILTER, IMAGE_FILE_FILTER
 from delphis_gui.gui.widgets.path_picker import PathPicker
+
 
 class DTETab(QWidget):
     """
@@ -173,14 +188,13 @@ class DTETab(QWidget):
             self.input_picker.setFileFilter(IMAGE_FILE_FILTER)
             self.input_picker.setPlaceholder("Select Game dump/ISO, tonemap pairs (RGBA_*), or folder containing textures...")
 
-    def execute_action(self):
-        """Execute DTE task from top action bar."""
+    def build_command(self) -> list[str] | None:
+        """Build the delphis-cli dte command arguments, or None if required paths are missing."""
         in_path = self.input_picker.path()
         out_path = self.output_picker.path()
 
         if not in_path or not out_path:
-            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
-            return
+            return None
 
         mode_id = self.mode_btn_group.checkedId()
         mode_map = {
@@ -189,14 +203,14 @@ class DTETab(QWidget):
             3: "split_tonemaps",
             4: "extract",
             5: "unpack",
-            6: "custom"
+            6: "custom",
         }
         mode_name = mode_map.get(mode_id, "merge_rgba")
 
         cmd = [
             "dte", mode_name, in_path, out_path,
             "--tasks", str(self.spin_tasks.value()),
-            "--cleanup", str(self.combo_cleanup.currentData())
+            "--cleanup", str(self.combo_cleanup.currentData()),
         ]
 
         if not self.chk_recursive.isChecked():
@@ -212,6 +226,19 @@ class DTETab(QWidget):
 
         if mode_name == "custom" and self.txt_custom_cmd.text().strip():
             cmd.extend(["--custom-cmd", self.txt_custom_cmd.text().strip()])
+
+        extra_flags = self.txt_extra.text().strip()
+        if extra_flags:
+            cmd.extend(["--extra", extra_flags])
+
+        return cmd
+
+    def execute_action(self):
+        """Execute DTE task from top action bar."""
+        cmd = self.build_command()
+        if cmd is None:
+            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
+            return
 
         self.requestWorker.emit(cmd)
 

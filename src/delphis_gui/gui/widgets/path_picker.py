@@ -3,12 +3,20 @@ XDG Desktop Portal-Compatible Path Selector Widget with Drag & Drop Support.
 """
 
 import os
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QLineEdit, QPushButton, QFileDialog, QMenu
-)
+
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLineEdit,
+    QMenu,
+    QPushButton,
+    QWidget,
+)
+
 from delphis_gui.style import get_breeze_icon
+
 
 class PathPicker(QWidget):
     """

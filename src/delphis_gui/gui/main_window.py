@@ -3,22 +3,37 @@ Main Application Window for Delphis Qt6 GUI.
 Adheres strictly to the KDE Plasma 6 Breeze design language.
 """
 
-from typing import Optional, List
-from PyQt6.QtCore import Qt, QSize, QSettings
+from __future__ import annotations
+
+from PyQt6.QtCore import QSettings, QSize, Qt
 from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QMessageBox, QPushButton, QFrame, QDialog, QTextBrowser,
-    QToolButton, QMenu, QStatusBar, QApplication, QStyleFactory
+    QApplication,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QStatusBar,
+    QStyleFactory,
+    QTabWidget,
+    QTextBrowser,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
+
 from delphis_gui.constants import APP_NAME, APP_TITLE, APP_VERSION
-from delphis_gui.style import get_breeze_icon, get_app_icon, get_native_system_style
-from delphis_gui.gui.widgets.console_drawer import ConsoleDrawer
-from delphis_gui.gui.tabs.tab_dte import DTETab
-from delphis_gui.gui.tabs.tab_alpha import AlphaTab
-from delphis_gui.gui.tabs.tab_upscale import UpscaleTab
-from delphis_gui.gui.tabs.tab_dds import DDSTab
 from delphis_gui.core.bridge import CSharpCommandWorker
+from delphis_gui.gui.tabs.tab_alpha import AlphaTab
+from delphis_gui.gui.tabs.tab_dds import DDSTab
+from delphis_gui.gui.tabs.tab_dte import DTETab
+from delphis_gui.gui.tabs.tab_upscale import UpscaleTab
+from delphis_gui.gui.widgets.console_drawer import ConsoleDrawer
+from delphis_gui.style import get_app_icon, get_breeze_icon, get_native_system_style
+
 
 class MainWindow(QMainWindow):
     """
@@ -32,7 +47,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 620)
         self.setWindowIcon(get_app_icon())
 
-        self.current_worker: Optional[CSharpCommandWorker] = None
+        self.current_worker: CSharpCommandWorker | None = None
         self._init_ui()
         self.load_settings()
 
@@ -111,9 +126,6 @@ class MainWindow(QMainWindow):
 
         app_menu.addSeparator()
 
-        act_doctor = app_menu.addAction(get_breeze_icon("system-help", "help-contents"), "Run System Doctor")
-        act_doctor.triggered.connect(self._run_doctor)
-
         act_about = app_menu.addAction(get_breeze_icon("help-about", "dialog-information"), f"About {APP_NAME}")
         act_about.triggered.connect(self._show_about_dialog)
 
@@ -176,13 +188,11 @@ class MainWindow(QMainWindow):
         if tab and hasattr(tab, "execute_action"):
             tab.execute_action()
 
-    def _run_doctor(self):
-        self.start_worker_with_args(["doctor"])
-
     def _show_about_dialog(self):
         about_dlg = QDialog(self)
         about_dlg.setWindowTitle(f"About {APP_NAME}")
-        about_dlg.resize(480, 300)
+        about_dlg.setMinimumSize(520, 380)
+        about_dlg.resize(580, 420)
         dlg_layout = QVBoxLayout(about_dlg)
 
         tb = QTextBrowser(about_dlg)
@@ -213,7 +223,7 @@ class MainWindow(QMainWindow):
         """Displays native About Qt dialog."""
         QApplication.aboutQt()
 
-    def start_worker_with_args(self, cmd_args: List[str]):
+    def start_worker_with_args(self, cmd_args: list[str]):
         """Schedule and run a background worker thread calling Delphis C# Engine."""
         if self.current_worker and self.current_worker.isRunning():
             QMessageBox.warning(
@@ -248,6 +258,9 @@ class MainWindow(QMainWindow):
         self.console_drawer.set_status("Running C# task in background...")
 
     def _on_worker_finished(self, success: bool, msg: str):
+        sender = self.sender()
+        if sender is not None and self.current_worker is not None and sender is not self.current_worker:
+            return
         self.console_drawer.set_busy(False)
         self.tab_widget.setEnabled(True)
         self.btn_top_action.setEnabled(True)
@@ -256,6 +269,9 @@ class MainWindow(QMainWindow):
         self.current_worker = None
 
     def _on_worker_cancelled(self):
+        sender = self.sender()
+        if sender is not None and self.current_worker is not None and sender is not self.current_worker:
+            return
         self.console_drawer.set_busy(False)
         self.tab_widget.setEnabled(True)
         self.btn_top_action.setEnabled(True)
@@ -267,7 +283,7 @@ class MainWindow(QMainWindow):
         """Applies chosen QStyle or resets to native desktop platform style, persisting it to QSettings."""
         if theme_name.lower() == "native":
             native_style = get_native_system_style()
-            created = QStyleFactory.create(native_style) if native_style in QStyleFactory.keys() else None
+            created = QStyleFactory.create(native_style)
             if created:
                 QApplication.setStyle(created)
             else:
@@ -284,10 +300,12 @@ class MainWindow(QMainWindow):
         # Repolish all widgets immediately for live update without restart
         for widget in QApplication.allWidgets():
             try:
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
+                style = widget.style()
+                if style is not None:
+                    style.unpolish(widget)
+                    style.polish(widget)
                 widget.update()
-            except Exception:
+            except RuntimeError:
                 pass
 
         settings = QSettings("Delphis", "Delphis")
@@ -332,4 +350,7 @@ class MainWindow(QMainWindow):
         if self.current_worker and self.current_worker.isRunning():
             self.current_worker.cancel()
             self.current_worker.wait(1500)
+        gpu_worker = getattr(self.tab_upscale, "_gpu_worker", None)
+        if gpu_worker is not None and gpu_worker.isRunning():
+            gpu_worker.wait(1500)
         event.accept()

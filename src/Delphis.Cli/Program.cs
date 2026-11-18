@@ -11,7 +11,8 @@ public class Program
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-        bool quiet = args.Contains("-q") || args.Contains("--quiet") || args.Contains("--no-logs");
+        bool hasNoLogs = args.Contains("--no-logs");
+        bool quiet = args.Contains("-q") || args.Contains("--quiet") || hasNoLogs;
         var filteredArgs = args.Where(a => a is not "-q" and not "--quiet" and not "--no-logs").ToArray();
 
         if (filteredArgs.Length == 0 || filteredArgs[0] is "-h" or "--help" or "help")
@@ -49,11 +50,11 @@ public class Program
         {
             return command switch
             {
-                "doctor" => RunDoctor(env),
+                "fetch-realesrgan" => await RunFetchRealEsrganAsync(),
                 "alpha" => await RunAlphaAsync(cmdArgs, env, runner, progressLog),
                 "dds" => await RunDdsAsync(cmdArgs, env, runner, progressLog),
                 "upscale" => await RunUpscaleAsync(cmdArgs, env, runner, progressLog),
-                "dte" => await RunDteAsync(cmdArgs, env, runner, progressLog),
+                "dte" => await RunDteAsync(cmdArgs, env, runner, progressLog, hasNoLogs),
                 _ => HandleUnknownCommand(command)
             };
         }
@@ -68,12 +69,11 @@ public class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine($"🐬 {DelphisConstants.AppTitle} (CLI v{DelphisConstants.AppVersion})");
+        Console.WriteLine($"{DelphisConstants.AppTitle} (CLI v{DelphisConstants.AppVersion})");
         Console.WriteLine("===============================================================");
         Console.WriteLine("Usage: delphis-cli <command> [options]");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  doctor                                   Check status of backend dependencies and Vulkan GPUs");
         Console.WriteLine("  alpha <in> <out> [options]               Adjust or remove alpha transparency with anti-aliasing");
         Console.WriteLine("  dds <in> <out> [options]                 Convert textures to Dolphin-optimized DDS format");
         Console.WriteLine("  upscale <in> <out> [options]             4-channel alpha-preserving Real-ESRGAN AI upscaler");
@@ -89,29 +89,71 @@ public class Program
         Console.WriteLine("DTE Flags:     --tasks <n>, --cleanup <mode>, --no-recursive, --mips, --no-dmd, --custom-cmd <verb>, --extra <flags>");
     }
 
-    private static int RunDoctor(IEnvironmentDetector env)
+    private static async Task<int> RunFetchRealEsrganAsync()
     {
-        Console.WriteLine("🔍 Delphis System & Dependency Doctor");
-        Console.WriteLine("====================================");
-
-        var deps = env.CheckDependencies();
-        foreach (var (k, info) in deps)
+        if (!OperatingSystem.IsLinux() || System.Runtime.InteropServices.RuntimeInformation.OSArchitecture != System.Runtime.InteropServices.Architecture.X64)
         {
-            Console.ForegroundColor = info.IsInstalled ? ConsoleColor.Green : (info.IsOptional ? ConsoleColor.Yellow : ConsoleColor.Red);
-            var mark = info.IsInstalled ? "✔" : "✘";
-            Console.WriteLine($"  {mark} {info.Name,-50} : {(info.IsInstalled ? info.Path : "NOT FOUND")}");
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("[WARNING] The upstream Real-ESRGAN release only ships x86_64 Linux binaries.");
+            Console.WriteLine("          On other architectures, build realesrgan-ncnn-vulkan from source and put it on PATH.");
             Console.ResetColor();
         }
 
-        Console.WriteLine();
-        Console.WriteLine("🎮 Vulkan Graphics Adapters:");
-        var gpus = env.DetectVulkanGpus();
-        foreach (var gpu in gpus)
+        var lastPct = -1;
+        var progressLineOpen = false;
+        var progress = new SyncProgress<ProcessingProgress>(p =>
         {
-            Console.WriteLine($"  • Device {gpu.DeviceId}: {gpu.DeviceName} {(gpu.IsDiscrete ? "(Discrete)" : "")}");
+            if (p.Percentage == lastPct) return;
+            lastPct = p.Percentage;
+            Console.Write($"\r  {p.Message}   ");
+            progressLineOpen = true;
+        });
+
+        // Always report download/extraction status, even in quiet mode.
+        var syncLog = new SyncProgress<LogEntry>(e =>
+        {
+            if (progressLineOpen)
+            {
+                Console.WriteLine();
+                progressLineOpen = false;
+            }
+
+            Console.ForegroundColor = e.Level switch
+            {
+                LogLevel.Success => ConsoleColor.Green,
+                LogLevel.Warning => ConsoleColor.Yellow,
+                LogLevel.Error => ConsoleColor.Red,
+                _ => ConsoleColor.Gray
+            };
+            Console.WriteLine(e.Message);
+            Console.ResetColor();
+        });
+
+        var downloader = new ToolDownloader();
+        var ok = await downloader.DownloadRealEsrganAsync(progress, syncLog);
+        return ok ? 0 : 1;
+    }
+
+    /// <summary>
+    /// IProgress implementation that invokes the handler synchronously (keeps console output ordered).
+    /// </summary>
+    private sealed class SyncProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+        public SyncProgress(Action<T> handler) => _handler = handler;
+        public void Report(T value) => _handler(value);
+    }
+
+    private static bool TryReadValue(string[] args, ref int index, out string value)
+    {
+        if (index + 1 < args.Length)
+        {
+            value = args[++index];
+            return true;
         }
 
-        return 0;
+        value = string.Empty;
+        return false;
     }
 
     private static async Task<int> RunAlphaAsync(string[] args, IEnvironmentDetector env, IProcessRunner runner, IProgress<LogEntry>? log)
@@ -135,14 +177,57 @@ public class Program
 
         for (int i = 2; i < args.Length; i++)
         {
-            if (args[i] == "--alpha" && i + 1 < args.Length && byte.TryParse(args[i + 1], out var val)) alpha = val;
-            if (args[i] == "--remove-alpha") remove = true;
-            if (args[i] == "--smooth") smooth = true;
-            if (args[i] == "--smooth-radius" && i + 1 < args.Length && double.TryParse(args[i + 1], NumberStyles.Any, CultureInfo.InvariantCulture, out var rad)) smoothRadius = rad;
-            if (args[i] == "--hard") scaleAlpha = false;
-            if (args[i] == "--no-defringe") defringe = false;
-            if (args[i] == "--bg" && i + 1 < args.Length) bgColor = AlphaProcessor.ParseColor(args[i + 1]);
-            if (args[i] == "--no-recursive") recursive = false;
+            switch (args[i])
+            {
+                case "--alpha":
+                    if (!TryReadValue(args, ref i, out var alphaRaw) || !byte.TryParse(alphaRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out alpha))
+                    {
+                        Console.Error.WriteLine("[ERROR] --alpha requires an integer between 0 and 255.");
+                        return 1;
+                    }
+                    break;
+                case "--remove-alpha":
+                    remove = true;
+                    break;
+                case "--smooth":
+                    smooth = true;
+                    break;
+                case "--smooth-radius":
+                    if (!TryReadValue(args, ref i, out var radRaw) || !double.TryParse(radRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out smoothRadius) || smoothRadius < 0)
+                    {
+                        Console.Error.WriteLine("[ERROR] --smooth-radius requires a non-negative number.");
+                        return 1;
+                    }
+                    break;
+                case "--hard":
+                    scaleAlpha = false;
+                    break;
+                case "--no-defringe":
+                    defringe = false;
+                    break;
+                case "--bg":
+                    if (!TryReadValue(args, ref i, out var bgRaw))
+                    {
+                        Console.Error.WriteLine("[ERROR] --bg requires a color value (e.g. white, #ffffff).");
+                        return 1;
+                    }
+                    bgColor = AlphaProcessor.ParseColor(bgRaw);
+                    if (bgColor is null)
+                    {
+                        Console.Error.WriteLine($"[ERROR] Invalid --bg color: '{bgRaw}'.");
+                        return 1;
+                    }
+                    break;
+                case "--no-recursive":
+                    recursive = false;
+                    break;
+            }
+        }
+
+        if (!File.Exists(input) && !Directory.Exists(input))
+        {
+            Console.Error.WriteLine($"[ERROR] Input path does not exist: '{input}'.");
+            return 1;
         }
 
         var processor = new AlphaProcessor(runner, env);
@@ -186,9 +271,28 @@ public class Program
 
         for (int i = 2; i < args.Length; i++)
         {
-            if (args[i] == "--preset" && i + 1 < args.Length) preset = args[i + 1];
-            if (args[i] == "--no-mips") mips = false;
-            if (args[i] == "--no-recursive") recursive = false;
+            switch (args[i])
+            {
+                case "--preset":
+                    if (!TryReadValue(args, ref i, out preset))
+                    {
+                        Console.Error.WriteLine("[ERROR] --preset requires a value (BC7, BC1, BC1a, BC3, BC5).");
+                        return 1;
+                    }
+                    break;
+                case "--no-mips":
+                    mips = false;
+                    break;
+                case "--no-recursive":
+                    recursive = false;
+                    break;
+            }
+        }
+
+        if (!File.Exists(input) && !Directory.Exists(input))
+        {
+            Console.Error.WriteLine($"[ERROR] Input path does not exist: '{input}'.");
+            return 1;
         }
 
         var optimizer = new DdsOptimizer(runner, env);
@@ -225,11 +329,47 @@ public class Program
 
         for (int i = 2; i < args.Length; i++)
         {
-            if (args[i] == "--scale" && i + 1 < args.Length && int.TryParse(args[i + 1], out var s)) scale = s;
-            if (args[i] == "--model" && i + 1 < args.Length) model = args[i + 1];
-            if (args[i] == "--alpha-mode" && i + 1 < args.Length) alphaMode = args[i + 1];
-            if (args[i] == "--gpu" && i + 1 < args.Length && int.TryParse(args[i + 1], out var g)) gpuId = g;
-            if (args[i] == "--no-recursive") recursive = false;
+            switch (args[i])
+            {
+                case "--scale":
+                    if (!TryReadValue(args, ref i, out var scaleRaw) || !int.TryParse(scaleRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out scale) || !DelphisConstants.ScaleFactors.Contains(scale))
+                    {
+                        Console.Error.WriteLine("[ERROR] --scale must be one of: 2, 3, 4.");
+                        return 1;
+                    }
+                    break;
+                case "--model":
+                    if (!TryReadValue(args, ref i, out model))
+                    {
+                        Console.Error.WriteLine("[ERROR] --model requires a model name.");
+                        return 1;
+                    }
+                    break;
+                case "--alpha-mode":
+                    if (!TryReadValue(args, ref i, out alphaMode))
+                    {
+                        Console.Error.WriteLine("[ERROR] --alpha-mode requires ai, lanczos, or none.");
+                        return 1;
+                    }
+                    break;
+                case "--gpu":
+                    if (!TryReadValue(args, ref i, out var gpuRaw) || !int.TryParse(gpuRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedGpu))
+                    {
+                        Console.Error.WriteLine("[ERROR] --gpu requires an integer device ID.");
+                        return 1;
+                    }
+                    gpuId = parsedGpu;
+                    break;
+                case "--no-recursive":
+                    recursive = false;
+                    break;
+            }
+        }
+
+        if (!File.Exists(input) && !Directory.Exists(input))
+        {
+            Console.Error.WriteLine($"[ERROR] Input path does not exist: '{input}'.");
+            return 1;
         }
 
         var upscaler = new UpscalerEngine(runner, env);
@@ -254,7 +394,7 @@ public class Program
         return count > 0 ? 0 : 1;
     }
 
-    private static async Task<int> RunDteAsync(string[] args, IEnvironmentDetector env, IProcessRunner runner, IProgress<LogEntry>? log)
+    private static async Task<int> RunDteAsync(string[] args, IEnvironmentDetector env, IProcessRunner runner, IProgress<LogEntry>? log, bool defaultDisableLogFile = false)
     {
         if (args.Length < 3)
         {
@@ -272,20 +412,56 @@ public class Program
         bool dmd = true;
         string? customCmd = null;
         string? extra = null;
-
-        bool disableLogFile = false;
+        bool disableLogFile = defaultDisableLogFile;
 
         for (int i = 3; i < args.Length; i++)
         {
-            if (args[i] is "--no-logfile" or "--no-log" or "--no-logs") disableLogFile = true;
-            if (args[i] is "--logfile" or "--keep-logfile" or "--with-logfile") disableLogFile = false;
-            if ((args[i] == "--tasks" || args[i] == "-Tasks") && i + 1 < args.Length && int.TryParse(args[i + 1], out var t)) tasks = t;
-            if (args[i] == "--cleanup" && i + 1 < args.Length) cleanup = args[i + 1];
-            if (args[i] == "--no-recursive") recursive = false;
-            if (args[i] == "--mips" || args[i] == "-Mip") mips = true;
-            if (args[i] == "--no-dmd") dmd = false;
-            if (args[i] == "--custom-cmd" && i + 1 < args.Length) customCmd = args[i + 1];
-            if (args[i] == "--extra" && i + 1 < args.Length) extra = args[i + 1];
+            switch (args[i])
+            {
+                case "--no-logfile" or "--no-log" or "--no-logs":
+                    disableLogFile = true;
+                    break;
+                case "--logfile" or "--keep-logfile" or "--with-logfile":
+                    disableLogFile = false;
+                    break;
+                case "--tasks" or "-Tasks":
+                    if (!TryReadValue(args, ref i, out var tasksRaw) || !int.TryParse(tasksRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out tasks) || tasks < 1)
+                    {
+                        Console.Error.WriteLine("[ERROR] --tasks requires a positive integer.");
+                        return 1;
+                    }
+                    break;
+                case "--cleanup":
+                    if (!TryReadValue(args, ref i, out cleanup))
+                    {
+                        Console.Error.WriteLine("[ERROR] --cleanup requires a mode (none, default, simple, compact).");
+                        return 1;
+                    }
+                    break;
+                case "--no-recursive":
+                    recursive = false;
+                    break;
+                case "--mips" or "-Mip":
+                    mips = true;
+                    break;
+                case "--no-dmd":
+                    dmd = false;
+                    break;
+                case "--custom-cmd":
+                    if (!TryReadValue(args, ref i, out customCmd))
+                    {
+                        Console.Error.WriteLine("[ERROR] --custom-cmd requires a command verb.");
+                        return 1;
+                    }
+                    break;
+                case "--extra":
+                    if (!TryReadValue(args, ref i, out extra))
+                    {
+                        Console.Error.WriteLine("[ERROR] --extra requires flags text.");
+                        return 1;
+                    }
+                    break;
+            }
         }
 
         var orchestrator = new DteOrchestrator(runner, env);

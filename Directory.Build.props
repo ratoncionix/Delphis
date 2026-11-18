@@ -8,5 +8,9 @@
     <AssemblyVersion>$(DelphisVersionFile)</AssemblyVersion>
     <FileVersion>$(DelphisVersionFile)</FileVersion>
     <InformationalVersion>$(DelphisVersionFile)</InformationalVersion>
+
+    <!-- Run on the newest installed .NET runtime when 8.0 itself is absent
+         (e.g. distributions that only ship .NET 9/10). -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 </Project>

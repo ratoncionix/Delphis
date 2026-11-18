@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Delphis
+GenericName=Dolphin Texture Manipulation Tool
+Comment=Extraction, Tonemaps, Alpha Transparency, AI Upscaling & DDS Optimization
+Exec=delphis
+Icon=delphis
+Terminal=false
+Categories=Utility;Graphics;Game;
+Keywords=Dolphin;Texture;GameCube;Wii;Upscale;DDS;Tonemap;

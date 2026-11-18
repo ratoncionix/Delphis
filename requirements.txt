@@ -1,0 +1,4 @@
+# Python dependencies of the Delphis GUI.
+# Prefer your distribution's packages (e.g. python3-pyqt6); use this file for a
+# virtual environment: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+PyQt6>=6.4

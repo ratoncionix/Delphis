@@ -37,4 +37,43 @@ public class AlphaProcessorTests
         Assert.Equal((byte)199, color[2]);
         Assert.Equal((byte)100, color[3]);
     }
+
+    [Fact]
+    public void BuildMagickArguments_ShouldIncludeDefringeAndAlphaScaleByDefault()
+    {
+        var opts = new AlphaOptions(AlphaValue: 130, SmoothEdges: true, SmoothRadius: 1.5, Defringe: true);
+        var args = AlphaProcessor.BuildMagickArguments("in.png", "out.png", opts);
+
+        Assert.Contains("-alpha", args);
+        Assert.Contains("set", args);
+        Assert.Contains("-fx", args);
+        Assert.Contains("multiply", args);
+        Assert.Contains("-blur", args);
+        Assert.Contains("0x1.5", args);
+        Assert.Equal("in.png", args[0]);
+        Assert.Equal("out.png", args[^1]);
+    }
+
+    [Fact]
+    public void BuildMagickArguments_WhenNoDefringeAndHardCutout_ShouldOmitFxAndUseSet()
+    {
+        var opts = new AlphaOptions(AlphaValue: 200, ScaleAlpha: false, Defringe: false);
+        var args = AlphaProcessor.BuildMagickArguments("in.png", "out.png", opts);
+
+        Assert.False(args.Contains("-fx"));
+        Assert.Contains("set", args);
+        Assert.Contains("200", args);
+    }
+
+    [Fact]
+    public void BuildMagickArguments_RemoveAlphaWithMatte_ShouldCompositeOverBackground()
+    {
+        var opts = new AlphaOptions(RemoveAlpha: true, BackgroundColor: new RgbColor(255, 0, 128));
+        var args = AlphaProcessor.BuildMagickArguments("in.png", "out.png", opts);
+
+        Assert.Contains("-background", args);
+        Assert.Contains("#FF0080", args);
+        Assert.Contains("remove", args);
+        Assert.False(args.Contains("-fx"));
+    }
 }

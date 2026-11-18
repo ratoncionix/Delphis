@@ -33,4 +33,32 @@ public class DdsOptimizerTests
         Assert.Contains("-m", args);
         Assert.Contains("0", args);
     }
+
+    [Fact]
+    public void BuildEncoderArguments_TexconvRelativeOutput_ShouldUseCurrentDir()
+    {
+        var options = new DdsOptions(Preset: "BC7", GenerateMipmaps: false);
+        var args = DdsOptimizer.BuildEncoderArguments("texconv", "in.png", "out.dds", options);
+
+        int oIdx = -1;
+        for (int i = 0; i < args.Count; i++)
+        {
+            if (args[i] == "-o")
+            {
+                oIdx = i;
+                break;
+            }
+        }
+        Assert.True(oIdx >= 0 && oIdx + 1 < args.Count);
+        Assert.Equal(".", args[oIdx + 1]);
+    }
+
+    [Fact]
+    public void ConvertBatchAsync_MissingInputPath_ShouldReturnZeroWithoutThrowing()
+    {
+        var optimizer = new DdsOptimizer();
+        var missing = Path.Combine(Path.GetTempPath(), $"delphis_missing_{Guid.NewGuid():N}");
+        var count = optimizer.ConvertBatchAsync(missing, Path.GetTempPath(), new DdsOptions()).GetAwaiter().GetResult();
+        Assert.Equal(0, count);
+    }
 }

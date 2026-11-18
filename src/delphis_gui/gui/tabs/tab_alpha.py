@@ -2,16 +2,31 @@
 Tab 2: Alpha & Transparency Adjuster
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QRadioButton,
-    QButtonGroup, QCheckBox, QLabel, QPushButton, QDoubleSpinBox,
-    QFormLayout, QColorDialog, QScrollArea, QMessageBox
-)
+from __future__ import annotations
+
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
-from delphis_gui.gui.widgets.path_picker import PathPicker
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
+    QColorDialog,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
 from delphis_gui.gui.widgets.alpha_slider import AlphaSlider
+from delphis_gui.gui.widgets.path_picker import PathPicker
 from delphis_gui.style import get_breeze_icon
+
 
 class AlphaTab(QWidget):
     """
@@ -147,14 +162,13 @@ class AlphaTab(QWidget):
             self.lbl_bg_preview.setPixmap(pm)
             self.lbl_bg_preview.setToolTip(f"Matte Color: {self.selected_bg_color}")
 
-    def execute_action(self):
-        """Execute alpha processing from top action bar."""
+    def build_command(self) -> list[str] | None:
+        """Build the delphis-cli alpha command arguments, or None if required paths are missing."""
         in_path = self.input_picker.path()
         out_path = self.output_picker.path()
 
         if not in_path or not out_path:
-            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
-            return
+            return None
 
         cmd = ["alpha", in_path, out_path]
         if self.rb_remove.isChecked():
@@ -172,6 +186,18 @@ class AlphaTab(QWidget):
 
         if not self.chk_defringe.isChecked():
             cmd.append("--no-defringe")
+
+        if not self.chk_recursive.isChecked():
+            cmd.append("--no-recursive")
+
+        return cmd
+
+    def execute_action(self):
+        """Execute alpha processing from top action bar."""
+        cmd = self.build_command()
+        if cmd is None:
+            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
+            return
 
         self.requestWorker.emit(cmd)
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Delphis.Core;
 using Delphis.Core.Models;
 
 namespace Delphis.Core.Services;
@@ -9,52 +10,83 @@ namespace Delphis.Core.Services;
 /// </summary>
 public class EnvironmentDetector : IEnvironmentDetector
 {
-    private static readonly string LocalToolsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".local", "share", "delphis", "bin"
-    );
-
     public string? FindExecutable(string name)
     {
-        // 1. Check system PATH
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        var searchPaths = pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var path in searchPaths)
+        foreach (var dir in GetSearchDirectories())
         {
-            var fullPath = Path.Combine(path, name);
-            if (File.Exists(fullPath))
+            var fullPath = Path.Combine(dir, name);
+            if (IsExecutableFile(fullPath))
             {
                 return fullPath;
             }
         }
 
-        // 2. Check user local app data dir
-        var localToolPath = Path.Combine(LocalToolsDir, name);
-        if (File.Exists(localToolPath))
-        {
-            return localToolPath;
-        }
+        return null;
+    }
 
-        // 3. Check common Linux & Nix fallback locations
-        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var fallbackLocations = new[]
-        {
-            Path.Combine(userHome, ".nix-profile", "bin", name),
-            Path.Combine("/run/current-system/sw/bin", name),
-            Path.Combine("/usr/local/bin", name),
-            Path.Combine("/usr/bin", name)
-        };
+    /// <summary>
+    /// Ordered list of directories searched for external tools:
+    /// 1. $DELPHIS_TOOLS_PATH
+    /// 2. $PATH
+    /// 3. The Delphis installation itself (bundled dte, launchers)
+    /// 4. The per-user tools directory ($XDG_DATA_HOME/delphis/bin)
+    /// 5. Common locations on any Linux distribution (also covers Nix profiles)
+    /// </summary>
+    public static IReadOnlyList<string> GetSearchDirectories()
+    {
+        var home = DelphisPaths.Home;
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
 
-        foreach (var location in fallbackLocations)
+        var ordered = new List<string>();
+        ordered.AddRange(DelphisPaths.ExtraToolDirs);
+        ordered.AddRange(pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+        ordered.AddRange(DelphisPaths.InstallToolDirs);
+        ordered.Add(DelphisPaths.UserToolsDir);
+        ordered.AddRange(new[]
         {
-            if (File.Exists(location))
+            Path.Combine(home, ".local", "bin"),
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/opt/delphis/bin",
+            Path.Combine(home, ".nix-profile", "bin"),
+            "/run/current-system/sw/bin"
+        });
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+        foreach (var dir in ordered)
+        {
+            if (!string.IsNullOrWhiteSpace(dir) && seen.Add(dir))
             {
-                return location;
+                result.Add(dir);
             }
         }
 
-        return null;
+        return result;
+    }
+
+    private static bool IsExecutableFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        try
+        {
+            const UnixFileMode anyExecute = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            return (File.GetUnixFileMode(path) & anyExecute) != 0;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     public IReadOnlyDictionary<string, DependencyInfo> CheckDependencies()
@@ -64,7 +96,7 @@ public class EnvironmentDetector : IEnvironmentDetector
             (Key: "dte", Name: "DolphinTextureExtraction-tool (dte)", Executables: new[] { "dte", "DolphinTextureExtraction.tool" }, RequiredFor: "Tab 1: Dolphin Texture Extraction & Tonemaps", Optional: false),
             (Key: "realesrgan", Name: "Real-ESRGAN NCNN Vulkan", Executables: new[] { "realesrgan-ncnn-vulkan", "realesrgan" }, RequiredFor: "Tab 3: AI Upscaler", Optional: false),
             (Key: "magick", Name: "ImageMagick", Executables: new[] { "magick", "convert" }, RequiredFor: "Tab 3: AI Upscaler & Tab 4: DDS Fallback", Optional: false),
-            (Key: "dds_tool", Name: "DDS Encoder (nvcompress / texconv / compressonatorcli / magick)", Executables: new[] { "nvcompress", "texconv", "compressonatorcli", "magick" }, RequiredFor: "Tab 4: DDS Texture Optimizer", Optional: false)
+            (Key: "dds_tool", Name: "DDS Encoder (nvcompress / texconv / compressonatorcli / magick)", Executables: new[] { "nvcompress", "texconv", "compressonatorcli", "magick", "convert" }, RequiredFor: "Tab 4: DDS Texture Optimizer", Optional: false)
         };
 
         var results = new Dictionary<string, DependencyInfo>(StringComparer.OrdinalIgnoreCase);
@@ -95,6 +127,44 @@ public class EnvironmentDetector : IEnvironmentDetector
         return results;
     }
 
+    private static (bool Success, string Stdout, string Stderr) RunQuickProbe(string fileName, string arguments, int timeoutMs = 3000)
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            if (proc is null)
+            {
+                return (false, string.Empty, string.Empty);
+            }
+
+            // Read both pipes concurrently before waiting so full buffers cannot deadlock.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            if (!proc.WaitForExit(timeoutMs))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                return (false, string.Empty, string.Empty);
+            }
+
+            Task.WaitAll(new Task[] { stdoutTask, stderrTask }, timeoutMs);
+            return (proc.ExitCode == 0, stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : string.Empty, stderrTask.IsCompletedSuccessfully ? stderrTask.Result : string.Empty);
+        }
+        catch
+        {
+            return (false, string.Empty, string.Empty);
+        }
+    }
+
     public IReadOnlyList<GpuDeviceInfo> DetectVulkanGpus()
     {
         var gpus = new List<GpuDeviceInfo>();
@@ -103,27 +173,10 @@ public class EnvironmentDetector : IEnvironmentDetector
         var vulkanInfo = FindExecutable("vulkaninfo");
         if (vulkanInfo is not null)
         {
-            try
+            var (ok, stdout, _) = RunQuickProbe(vulkanInfo, "--summary");
+            if (ok && !string.IsNullOrEmpty(stdout))
             {
-                using var proc = Process.Start(new ProcessStartInfo
-                {
-                    FileName = vulkanInfo,
-                    Arguments = "--summary",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-
-                if (proc is not null && proc.WaitForExit(3000))
-                {
-                    var stdout = proc.StandardOutput.ReadToEnd();
-                    ParseVulkanInfoSummary(stdout, gpus);
-                }
-            }
-            catch
-            {
-                // vulkaninfo probe failed; fall through
+                ParseVulkanInfoSummary(stdout, gpus);
             }
         }
 
@@ -133,38 +186,19 @@ public class EnvironmentDetector : IEnvironmentDetector
             var realesrgan = FindExecutable("realesrgan-ncnn-vulkan") ?? FindExecutable("realesrgan");
             if (realesrgan is not null)
             {
-                try
+                var (_, stdout, stderr) = RunQuickProbe(realesrgan, "-h");
+                var combined = stdout + stderr;
+                var matches = Regex.Matches(combined, @"\[(\d+)\s+([^\]]+)\]");
+                foreach (Match match in matches)
                 {
-                    using var proc = Process.Start(new ProcessStartInfo
+                    if (int.TryParse(match.Groups[1].Value, out var devId))
                     {
-                        FileName = realesrgan,
-                        Arguments = "-h",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    });
-
-                    if (proc is not null && proc.WaitForExit(3000))
-                    {
-                        var combined = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-                        var matches = Regex.Matches(combined, @"\[(\d+)\s+([^\]]+)\]");
-                        foreach (Match match in matches)
-                        {
-                            if (int.TryParse(match.Groups[1].Value, out var devId))
-                            {
-                                var name = match.Groups[2].Value.Trim();
-                                var isDiscrete = name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ||
-                                                 name.Contains("GeForce", StringComparison.OrdinalIgnoreCase) ||
-                                                 (name.Contains("Radeon", StringComparison.OrdinalIgnoreCase) && !name.Contains("Graphics", StringComparison.OrdinalIgnoreCase));
-                                gpus.Add(new GpuDeviceInfo(devId, name, isDiscrete));
-                            }
-                        }
+                        var name = match.Groups[2].Value.Trim();
+                        var isDiscrete = name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ||
+                                         name.Contains("GeForce", StringComparison.OrdinalIgnoreCase) ||
+                                         (name.Contains("Radeon", StringComparison.OrdinalIgnoreCase) && !name.Contains("Graphics", StringComparison.OrdinalIgnoreCase));
+                        gpus.Add(new GpuDeviceInfo(devId, name, isDiscrete));
                     }
-                }
-                catch
-                {
-                    // Fallback below
                 }
             }
         }

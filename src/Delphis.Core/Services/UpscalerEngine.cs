@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using Delphis.Core;
 using Delphis.Core.Models;
 
 namespace Delphis.Core.Services;
@@ -9,13 +11,71 @@ namespace Delphis.Core.Services;
 /// </summary>
 public class UpscalerEngine : IUpscalerEngine
 {
+    private static readonly SemaphoreSlim DownloadLock = new(1, 1);
+
     private readonly IProcessRunner _processRunner;
     private readonly IEnvironmentDetector _envDetector;
+    private readonly IToolDownloader _toolDownloader;
 
-    public UpscalerEngine(IProcessRunner? processRunner = null, IEnvironmentDetector? envDetector = null)
+    public UpscalerEngine(
+        IProcessRunner? processRunner = null,
+        IEnvironmentDetector? envDetector = null,
+        IToolDownloader? toolDownloader = null
+    )
     {
         _processRunner = processRunner ?? new ProcessRunner();
         _envDetector = envDetector ?? new EnvironmentDetector();
+        _toolDownloader = toolDownloader ?? new ToolDownloader();
+    }
+
+    private async Task<(string Executable, string? ModelsDir)> EnsureRealEsrganAsync(
+        string? modelsDirectory,
+        IProgress<LogEntry>? logProgress,
+        CancellationToken cancellationToken
+    )
+    {
+        var realesrgan = _envDetector.FindExecutable("realesrgan-ncnn-vulkan") ?? _envDetector.FindExecutable("realesrgan");
+        var modelsDir = realesrgan is not null ? (modelsDirectory ?? FindModelsDirectory(realesrgan)) : null;
+
+        bool missingExecutable = realesrgan is null;
+        bool missingUserModels = realesrgan is not null && modelsDir is null
+            && realesrgan.StartsWith(DelphisPaths.UserToolsDir, StringComparison.Ordinal);
+
+        if ((missingExecutable || missingUserModels)
+            && OperatingSystem.IsLinux()
+            && RuntimeInformation.OSArchitecture == Architecture.X64)
+        {
+            await DownloadLock.WaitAsync(cancellationToken);
+            try
+            {
+                realesrgan = _envDetector.FindExecutable("realesrgan-ncnn-vulkan") ?? _envDetector.FindExecutable("realesrgan");
+                modelsDir = realesrgan is not null ? (modelsDirectory ?? FindModelsDirectory(realesrgan)) : null;
+
+                if (realesrgan is null || (modelsDir is null && realesrgan.StartsWith(DelphisPaths.UserToolsDir, StringComparison.Ordinal)))
+                {
+                    logProgress?.Report(new LogEntry("Real-ESRGAN not found locally; downloading into per-user tools directory...", LogLevel.Info));
+                    var ok = await _toolDownloader.DownloadRealEsrganAsync(null, logProgress, cancellationToken);
+                    if (ok)
+                    {
+                        realesrgan = _envDetector.FindExecutable("realesrgan-ncnn-vulkan") ?? _envDetector.FindExecutable("realesrgan");
+                        modelsDir = realesrgan is not null ? (modelsDirectory ?? FindModelsDirectory(realesrgan)) : null;
+                    }
+                }
+            }
+            finally
+            {
+                DownloadLock.Release();
+            }
+        }
+
+        if (realesrgan is null)
+        {
+            throw new FileNotFoundException(
+                "Real-ESRGAN executable ('realesrgan-ncnn-vulkan') was not found and could not be downloaded automatically."
+            );
+        }
+
+        return (realesrgan, modelsDir);
     }
 
     public string? FindModelsDirectory(string realesrganExecutable)
@@ -30,8 +90,11 @@ public class UpscalerEngine : IUpscalerEngine
             Path.Combine(parentDir, "share", "models"),
             Path.Combine(parentDir, "share", "realesrgan-ncnn-vulkan", "models"),
             Path.Combine(parentDir, "share", "Real-ESRGAN-ncnn-vulkan", "models"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "delphis", "bin", "models"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "delphis", "models")
+            Path.Combine(DelphisPaths.UserToolsDir, "models"),
+            DelphisPaths.UserModelsDir,
+            "/usr/share/realesrgan-ncnn-vulkan/models",
+            "/usr/local/share/realesrgan-ncnn-vulkan/models",
+            "/opt/realesrgan-ncnn-vulkan/models"
         };
 
         foreach (var c in candidates)
@@ -111,9 +174,21 @@ public class UpscalerEngine : IUpscalerEngine
         try
         {
             var identifyExe = _envDetector.FindExecutable("magick") ?? _envDetector.FindExecutable("identify") ?? magickExecutable;
-            var args = Path.GetFileName(identifyExe).StartsWith("magick", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "identify", "-format", "%w %h %[channels]", imagePath }
-                : new[] { "-format", "%w %h %[channels]", imagePath };
+            var exeName = Path.GetFileName(identifyExe);
+            string[] args;
+            if (exeName.StartsWith("magick", StringComparison.OrdinalIgnoreCase))
+            {
+                args = new[] { "identify", "-format", "%w %h %[channels]", imagePath };
+            }
+            else if (exeName.StartsWith("convert", StringComparison.OrdinalIgnoreCase))
+            {
+                // ImageMagick 6 convert can still format metadata via info: when identify is absent.
+                args = new[] { imagePath, "-format", "%w %h %[channels]", "info:" };
+            }
+            else
+            {
+                args = new[] { "-format", "%w %h %[channels]", imagePath };
+            }
 
             var res = await _processRunner.RunAsync(identifyExe, args, null, null, cancellationToken);
             if (res.IsSuccess && !string.IsNullOrWhiteSpace(res.StandardOutput))
@@ -139,15 +214,14 @@ public class UpscalerEngine : IUpscalerEngine
         CancellationToken cancellationToken = default
     )
     {
-        var realesrgan = _envDetector.FindExecutable("realesrgan-ncnn-vulkan") ?? _envDetector.FindExecutable("realesrgan");
+        if (!File.Exists(inputPath))
+            return false;
+
+        var (realesrgan, modelsDir) = await EnsureRealEsrganAsync(modelsDirectory, null, cancellationToken);
         var magick = _envDetector.FindExecutable("magick") ?? _envDetector.FindExecutable("convert");
 
-        if (realesrgan is null)
-            throw new FileNotFoundException("Real-ESRGAN executable ('realesrgan-ncnn-vulkan') not found in PATH.");
         if (magick is null)
-            throw new FileNotFoundException("ImageMagick executable ('magick') not found in PATH.");
-
-        var modelsDir = modelsDirectory ?? FindModelsDirectory(realesrgan);
+            throw new FileNotFoundException("ImageMagick executable ('magick' or 'convert') not found in PATH.");
         if (!string.IsNullOrEmpty(modelsDir) && Directory.Exists(modelsDir))
         {
             var modelPrefix = options.Model;
@@ -199,8 +273,8 @@ public class UpscalerEngine : IUpscalerEngine
 
         try
         {
-            // Case A: Image has NO alpha channel (opaque) -> 1-pass direct RGB upscale (Maximum performance)
-            if (!hasAlpha)
+            // Case A: Image has NO alpha channel or user requested AlphaMode=none -> 1-pass direct RGB upscale
+            if (!hasAlpha || options.AlphaMode.Equals("none", StringComparison.OrdinalIgnoreCase))
             {
                 await _processRunner.RunAsync(magick, new[] { inputPath, "-colorspace", "sRGB", "-depth", "8", $"PNG24:{rgbIn}" }, null, null, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -318,10 +392,19 @@ public class UpscalerEngine : IUpscalerEngine
         CancellationToken cancellationToken = default
     )
     {
-        var realesrgan = _envDetector.FindExecutable("realesrgan-ncnn-vulkan") ?? _envDetector.FindExecutable("realesrgan");
-        if (realesrgan is null)
+        if (!Directory.Exists(inputDirectory) && !File.Exists(inputDirectory))
         {
-            logProgress?.Report(new LogEntry("Real-ESRGAN executable ('realesrgan-ncnn-vulkan') not found in PATH.", LogLevel.Error));
+            logProgress?.Report(new LogEntry($"Input path does not exist: {inputDirectory}", LogLevel.Error));
+            return 0;
+        }
+
+        try
+        {
+            await EnsureRealEsrganAsync(null, logProgress, cancellationToken);
+        }
+        catch (FileNotFoundException ex)
+        {
+            logProgress?.Report(new LogEntry(ex.Message, LogLevel.Error));
             return 0;
         }
 

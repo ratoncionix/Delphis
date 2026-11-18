@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using Delphis.Core;
 using Delphis.Core.Models;
 
 namespace Delphis.Core.Services;
@@ -10,10 +11,7 @@ public class ToolDownloader : IToolDownloader
 {
     private const string DownloadUrl = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip";
     
-    private static readonly string ToolsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".local", "share", "delphis", "bin"
-    );
+    private static string ToolsDir => DelphisPaths.UserToolsDir;
 
     private readonly HttpClient _httpClient;
 

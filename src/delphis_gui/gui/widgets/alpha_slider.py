@@ -2,11 +2,19 @@
 Synchronized Alpha Slider + SpinBox + Preset Selector Widget.
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSlider, QSpinBox, QLabel, QPushButton
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
+
 from delphis_gui.constants import ALPHA_QUICK_PRESETS
+
 
 class AlphaSlider(QWidget):
     """

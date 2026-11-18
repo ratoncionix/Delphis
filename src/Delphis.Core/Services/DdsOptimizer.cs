@@ -66,9 +66,10 @@ public class DdsOptimizer : IDdsOptimizer
                     "BC5" => "BC5_UNORM",
                     _ => "BC7_UNORM"
                 };
+                var texOutDir = Path.GetDirectoryName(outputPath);
                 args.AddRange(new[] { "-y", "-f", tcFormat });
                 args.AddRange(options.GenerateMipmaps ? new[] { "-m", "0" } : new[] { "-m", "1" });
-                args.AddRange(new[] { "-o", Path.GetDirectoryName(outputPath) ?? ".", inputPath });
+                args.AddRange(new[] { "-o", string.IsNullOrEmpty(texOutDir) ? "." : texOutDir, inputPath });
                 break;
 
             case "compressonator":
@@ -115,6 +116,9 @@ public class DdsOptimizer : IDdsOptimizer
         CancellationToken cancellationToken = default
     )
     {
+        if (!File.Exists(inputPath))
+            return false;
+
         var encoder = DetectEncoder();
         if (encoder is null)
         {
@@ -149,6 +153,12 @@ public class DdsOptimizer : IDdsOptimizer
         CancellationToken cancellationToken = default
     )
     {
+        if (!Directory.Exists(inputDirectory) && !File.Exists(inputDirectory))
+        {
+            logProgress?.Report(new LogEntry($"Input path does not exist: {inputDirectory}", LogLevel.Error));
+            return 0;
+        }
+
         var encoder = DetectEncoder();
         if (encoder is null)
         {

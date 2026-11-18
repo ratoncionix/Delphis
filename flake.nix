@@ -129,16 +129,35 @@
 
       devShells = eachSystem (
         { pkgs, system }:
+        let
+          qtPluginPaths = pkgs.lib.makeSearchPath "lib/qt-6/plugins" [
+            pkgs.qt6.qtbase
+            pkgs.qt6.qtsvg
+            pkgs.qt6.qtwayland
+            pkgs.kdePackages.breeze
+            pkgs.kdePackages.plasma-integration
+          ];
+          xdgDataDirs = pkgs.lib.makeSearchPath "share" [
+            pkgs.kdePackages.breeze-icons
+          ];
+        in
         {
           default = pkgs.mkShell {
             name = "delphis-dev-shell";
 
             packages = [
               pkgs.dotnetCorePackages.sdk_8_0
+              pkgs.gnumake
               (pkgs.python3.withPackages (ps: with ps; [
                 pyqt6
                 pillow
               ]))
+              pkgs.qt6.qtbase
+              pkgs.qt6.qtwayland
+              pkgs.qt6.qtsvg
+              pkgs.kdePackages.breeze
+              pkgs.kdePackages.breeze-icons
+              pkgs.kdePackages.plasma-integration
               pkgs.dolphin-texture-extraction-tool
               pkgs.realesrgan-ncnn-vulkan
               pkgs.imagemagick
@@ -148,9 +167,13 @@
             ];
 
             shellHook = ''
-              echo "🐬 Welcome to the Delphis .NET 8 development environment!"
-              echo "Run 'dotnet run --project tests/Delphis.Tests/Delphis.Tests.csproj' to execute tests."
-              echo "Run 'delphis --help' or 'delphis doctor' to launch Delphis."
+              # Prepend the flake's Qt6/KDE plugins so mismatched host Qt plugins do not shadow them.
+              export QT_PLUGIN_PATH="${qtPluginPaths}''${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+              export XDG_DATA_DIRS="${xdgDataDirs}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+              echo "Delphis .NET 8 development shell"
+              echo "  make          build delphis-cli into build/"
+              echo "  make test     run automated C# and Python tests"
+              echo "  make run      launch the PyQt6 GUI from source"
             '';
           };
         }

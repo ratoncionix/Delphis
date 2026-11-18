@@ -4,9 +4,8 @@
   dotnetCorePackages,
   python3Packages,
   qt6,
+  kdePackages,
   makeWrapper,
-  makeDesktopItem,
-  copyDesktopItems,
   dte,
   realesrgan-ncnn-vulkan,
   imagemagick,
@@ -16,28 +15,8 @@
   src ? ../.,
 }:
 let
-  desktopItem = makeDesktopItem {
-    name = "delphis";
-    exec = "delphis";
-    icon = "delphis";
-    desktopName = "Delphis";
-    genericName = "Dolphin Texture Manipulation Tool";
-    comment = "Extraction, Tonemaps, Alpha Transparency, AI Upscaling & DDS Optimization";
-    categories = [
-      "Utility"
-      "Graphics"
-      "Game"
-    ];
-    keywords = [
-      "Dolphin"
-      "Texture"
-      "GameCube"
-      "Wii"
-      "Upscale"
-      "DDS"
-      "Tonemap"
-    ];
-  };
+  dotnet-sdk = dotnetCorePackages.sdk_8_0;
+  dotnet-runtime = dotnetCorePackages.runtime_8_0;
 
   pythonEnv = python3Packages.python.withPackages (
     ps: with ps; [
@@ -45,83 +24,64 @@ let
       pillow
     ]
   );
+
+  # External tools Delphis drives at runtime. On other distributions these come
+  # from the system package manager; on Nix they are pinned here.
+  runtimeTools = lib.makeBinPath [
+    dte
+    realesrgan-ncnn-vulkan
+    imagemagick
+    nvidia-texture-tools
+    vulkan-tools
+    vulkan-loader
+  ];
 in
-stdenv.mkDerivation rec {
+stdenv.mkDerivation {
   pname = "delphis";
   version = lib.removeSuffix "\n" (builtins.readFile ../VERSION);
 
   inherit src;
 
   nativeBuildInputs = [
-    dotnetCorePackages.sdk_8_0
+    dotnet-sdk
     makeWrapper
-    copyDesktopItems
     qt6.wrapQtAppsHook
   ];
 
   buildInputs = [
-    dotnetCorePackages.runtime_8_0
+    dotnet-runtime
     qt6.qtbase
     qt6.qtwayland
     qt6.qtsvg
+    # Match Qt ABI for Breeze widget style & KDE platform theme (light/dark palette).
+    kdePackages.breeze
+    kdePackages.breeze-icons
+    kdePackages.plasma-integration
     pythonEnv
   ];
 
-  desktopItems = [ desktopItem ];
+  # Same build system as every other Linux distribution (see ../Makefile).
+  # DTE is packaged separately (./dte.nix) with pinned NuGet dependencies,
+  # so it is not built here.
+  makeFlags = [
+    "PREFIX=${placeholder "out"}"
+    "PYTHON=${pythonEnv}/bin/python3"
+    "DOTNET_HOST=${dotnet-runtime}/bin/dotnet"
+    "WITH_DTE=0"
+  ];
 
-  buildPhase = ''
-    runHook preBuild
-    export DOTNET_CLI_TELEMETRY_OPTOUT=1
-    export DOTNET_NOLOGO=1
+  preBuild = ''
     export HOME=$TMPDIR
-    dotnet publish src/Delphis.Cli/Delphis.Cli.csproj -c Release -o $out/lib/delphis --no-self-contained
-    runHook postBuild
   '';
 
-  installPhase = ''
-    runHook preInstall
-    mkdir -p $out/bin $out/lib/delphis_gui
+  dontWrapQtApps = true;
 
-    # Install Python GUI sources and VERSION file
-    cp -r src/delphis_gui/* $out/lib/delphis_gui/
-    cp VERSION $out/lib/delphis_gui/VERSION
+  postFixup = ''
+    wrapProgram $out/bin/delphis-cli \
+      --prefix PATH : ${runtimeTools}
 
-    # 1. C# CLI Wrapper
-    makeWrapper "${dotnetCorePackages.runtime_8_0}/bin/dotnet" $out/bin/delphis-cli \
-      --add-flags "$out/lib/delphis/delphis-cli.dll" \
-      --prefix PATH : ${lib.makeBinPath [
-        dte
-        realesrgan-ncnn-vulkan
-        imagemagick
-        nvidia-texture-tools
-        vulkan-tools
-        vulkan-loader
-      ]}
-
-    # 2. Main GUI Executable (PyQt6 calling C# backend)
-    makeWrapper "${pythonEnv}/bin/python3" $out/bin/delphis \
-      --add-flags "$out/lib/delphis_gui/main.py" \
-      --set PYTHONPATH "$out/lib" \
-      --prefix PATH : "$out/bin" \
-      --prefix PATH : ${lib.makeBinPath [
-        dte
-        realesrgan-ncnn-vulkan
-        imagemagick
-        nvidia-texture-tools
-        vulkan-tools
-        vulkan-loader
-      ]}
-
-    install -Dm644 assets/icons/delphis.svg $out/share/icons/hicolor/scalable/apps/delphis.svg
-    install -Dm644 assets/icons/delphis.svg $out/share/pixmaps/delphis.svg
-
-    runHook postInstall
-  '';
-
-  dontWrapQtApps = false;
-
-  preFixup = ''
-    makeWrapperArgs+=("''${qtWrapperArgs[@]}")
+    wrapQtApp $out/bin/delphis \
+      --prefix PATH : ${runtimeTools}
   '';
 
   meta = with lib; {

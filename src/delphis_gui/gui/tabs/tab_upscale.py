@@ -2,14 +2,24 @@
 Tab 3: 4-Channel AI Upscaler (Real-ESRGAN + ImageMagick)
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from __future__ import annotations
+
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
-    QCheckBox, QLabel, QFormLayout, QScrollArea, QMessageBox
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
+    QMessageBox,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
+
+from delphis_gui.constants import AI_MODELS, ALPHA_UPSCALE_MODES, SCALE_FACTORS
+from delphis_gui.core.bridge import GpuProbeWorker
 from delphis_gui.gui.widgets.path_picker import PathPicker
-from delphis_gui.constants import AI_MODELS, SCALE_FACTORS, ALPHA_UPSCALE_MODES
-from delphis_gui.core.bridge import detect_vulkan_gpus
+
 
 class UpscaleTab(QWidget):
     """
@@ -75,12 +85,13 @@ class UpscaleTab(QWidget):
             self.combo_alpha.addItem(mode_label, mode_id)
         config_layout.addRow("Alpha Channel Mode:", self.combo_alpha)
 
-        # Vulkan GPU Device
+        # Vulkan GPU Device (populated asynchronously to keep startup instantaneous)
         self.combo_gpu = QComboBox(self)
-        gpus = detect_vulkan_gpus()
-        for dev_id, name in gpus:
-            self.combo_gpu.addItem(name, dev_id)
+        self.combo_gpu.addItem("Auto-detect Best Discrete GPU (Recommended)", -1)
+        self.combo_gpu.addItem("GPU 0: Default Vulkan Graphics Device", 0)
         config_layout.addRow("Vulkan GPU Device:", self.combo_gpu)
+        self._gpu_worker: GpuProbeWorker | None = None
+        QTimer.singleShot(0, self._probe_gpus_async)
 
         layout.addWidget(config_group)
 
@@ -102,14 +113,29 @@ class UpscaleTab(QWidget):
         main_vbox.setContentsMargins(0, 0, 0, 0)
         main_vbox.addWidget(scroll)
 
-    def execute_action(self):
-        """Execute AI upscale task from top action bar."""
+    def _probe_gpus_async(self) -> None:
+        if self._gpu_worker is not None and self._gpu_worker.isRunning():
+            return
+        self._gpu_worker = GpuProbeWorker(self)
+        self._gpu_worker.gpusDetected.connect(self._on_gpus_detected)
+        self._gpu_worker.start()
+
+    def _on_gpus_detected(self, gpus: list[tuple[int, str]]) -> None:
+        current_id = self.combo_gpu.currentData()
+        self.combo_gpu.clear()
+        for dev_id, name in gpus:
+            self.combo_gpu.addItem(name, dev_id)
+        idx = self.combo_gpu.findData(current_id)
+        if idx >= 0:
+            self.combo_gpu.setCurrentIndex(idx)
+
+    def build_command(self) -> list[str] | None:
+        """Build the delphis-cli upscale command arguments, or None if required paths are missing."""
         in_path = self.input_picker.path()
         out_path = self.output_picker.path()
 
         if not in_path or not out_path:
-            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
-            return
+            return None
 
         scale_val = self.combo_scale.currentData()
         model_val = self.combo_model.currentData()
@@ -121,8 +147,20 @@ class UpscaleTab(QWidget):
             "--scale", str(scale_val),
             "--model", str(model_val),
             "--alpha-mode", str(alpha_mode_val),
-            "--gpu", str(gpu_val)
+            "--gpu", str(gpu_val),
         ]
+
+        if not self.chk_recursive.isChecked():
+            cmd.append("--no-recursive")
+
+        return cmd
+
+    def execute_action(self):
+        """Execute AI upscale task from top action bar."""
+        cmd = self.build_command()
+        if cmd is None:
+            QMessageBox.warning(self, "Missing Paths", "Please specify both Input Path and Output Folder.")
+            return
 
         self.requestWorker.emit(cmd)
 
