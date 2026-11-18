@@ -88,7 +88,7 @@ python3 -m venv ~/.local/share/delphis/venv
 ## Building and installing
 
 ```bash
-git clone https://github.com/Cleison-oliveira/Delphis.git
+git clone https://github.com/ratoncionix/Delphis.git
 cd Delphis
 make
 
@@ -183,10 +183,10 @@ The repository includes a Nix flake that wraps `Makefile` (`WITH_DTE=0`) and pin
 ### Direct execution
 
 ```bash
-nix run github:Cleison-oliveira/Delphis             # GUI
-nix run github:Cleison-oliveira/Delphis -- --help   # CLI help
-nix run github:Cleison-oliveira/Delphis#dte -- HELP # DTE CLI
-nix run github:Cleison-oliveira/Delphis#test        # Automated test suite
+nix run github:ratoncionix/Delphis             # GUI
+nix run github:ratoncionix/Delphis -- --help   # CLI help
+nix run github:ratoncionix/Delphis#dte -- HELP # DTE CLI
+nix run github:ratoncionix/Delphis#test        # Automated test suite
 ```
 
 ### NixOS module
@@ -195,7 +195,7 @@ nix run github:Cleison-oliveira/Delphis#test        # Automated test suite
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    delphis.url = "github:Cleison-oliveira/Delphis";
+    delphis.url = "github:ratoncionix/Delphis";
   };
 
   outputs = { nixpkgs, delphis, ... }: {

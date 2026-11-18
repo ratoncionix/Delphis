@@ -86,7 +86,7 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Delphis: Dolphin Texture Manipulation Tool - Extraction, Tonemaps, Alpha Transparency, AI Upscaling & DDS Optimization";
-    homepage = "https://github.com/Cleison-oliveira/delphis";
+    homepage = "https://github.com/ratoncionix/Delphis";
     license = licenses.mit;
     mainProgram = "delphis";
     platforms = platforms.linux;

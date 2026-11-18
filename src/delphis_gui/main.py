@@ -71,14 +71,14 @@ def main() -> int:
 
     # 2. Application and Organization metadata for QSettings
     QCoreApplication.setOrganizationName("Delphis")
-    QCoreApplication.setOrganizationDomain("github.com/Cleison-oliveira/Delphis")
+    QCoreApplication.setOrganizationDomain("github.com/ratoncionix/Delphis")
     QCoreApplication.setApplicationName("Delphis")
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("Delphis")
-    app.setOrganizationDomain("github.com/Cleison-oliveira/Delphis")
+    app.setOrganizationDomain("github.com/ratoncionix/Delphis")
     app.setDesktopFileName("delphis")
 
     setup_kde_plasma_integration(app)

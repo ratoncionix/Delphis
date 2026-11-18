@@ -4,7 +4,7 @@ Delphis integrates and builds upon the following open-source projects:
 
 ## Primary Authors and Contributors
 
-- **Cleison Oliveira & Delphis Contributors** — Application architecture, Qt6 interface, Linux and Nix packaging, 4-channel AI upscaling orchestration, alpha processing engine, and DDS conversion pipeline ([repository](https://github.com/Cleison-oliveira/delphis), MIT License).
+- **Cleison Oliveira & Delphis Contributors** — Application architecture, Qt6 interface, Linux and Nix packaging, 4-channel AI upscaling orchestration, alpha processing engine, and DDS conversion pipeline ([repository](https://github.com/ratoncionix/Delphis), MIT License).
 - **Venomalia** — [DolphinTextureExtraction-tool](https://github.com/Venomalia/DolphinTextureExtraction-tool) and [AuroraLib.Compression](https://github.com/Venomalia/AuroraLib.Compression) (MIT License), providing GameCube/Wii texture extraction, Dolphin texture hashing, and tonemap merging/splitting.
 
 ## Libraries and External Tools
